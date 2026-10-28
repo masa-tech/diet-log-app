@@ -206,13 +206,20 @@ svg.chart .grid { stroke: var(--line); stroke-width: 1; }
 svg.chart .tline { stroke: var(--text); stroke-width: 2; stroke-dasharray: 4 3; }
 svg.chart .b-k { fill: var(--accent); } svg.chart .b-p { fill: var(--p); } svg.chart .b-f { fill: var(--f); } svg.chart .b-c { fill: var(--c); }
 svg.chart .b-over { fill: var(--over); }
+svg.chart text.ok { fill: var(--accent); font-weight: 700; font-size: 13px; }
+svg.chart text.ok.sm { font-size: 9px; }
+svg.chart text.vl { paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
 svg.chart .w-line { fill: none; stroke: var(--muted); stroke-width: 1.5; }
 svg.chart .w-pt { fill: var(--c); }
 svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
 .legend i.l-dash { height: 0; border-top: 2px dashed var(--text); border-radius: 0; vertical-align: 3px; }
+.legend i.l-ok { width: auto; height: auto; border-radius: 0; color: var(--accent); font-style: normal; font-weight: 700; vertical-align: 0; }
 .legend i.l-ma { height: 0; border-top: 3px solid var(--accent); border-radius: 0; vertical-align: 3px; }
+.nut-seg button { white-space: nowrap; font-size: 13px; }
+@media (max-width: 340px) { .nut-seg button { font-size: 12px; } }
+.nut-seg button i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: 0; }
 .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .stat { background: var(--soft); border-radius: 10px; padding: 8px 10px; }
 .stat .k { font-size: 12px; color: var(--muted); }
@@ -1514,7 +1521,7 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
   }
 
   // ===== 画面の状態 =====
-  var ui = { tab: 'record', date: todayStr(), dashMode: 'day', dashDate: todayStr(), today: todayStr() };
+  var ui = { tab: 'record', date: todayStr(), dashMode: 'day', dashDate: todayStr(), dashNut: 'p', today: todayStr() };
   function mealLabel(id) { for (var i = 0; i < MEALS.length; i++) if (MEALS[i].id === id) return MEALS[i].label; return id; }
   function mealByTime() {
     var h = new Date().getHours() + new Date().getMinutes() / 60;
@@ -1940,7 +1947,10 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
     else if (ui.dashMode === 'week') label = shortDate(st.from) + '〜' + shortDate(st.to);
     else { var d = parseYmd(ui.dashDate); label = d.getFullYear() + '年' + (d.getMonth() + 1) + '月'; }
     $('#dash-label').textContent = label;
+    // 裏で描き直しても（同期・別のタブの保存・画面に戻ったとき）、P・F・C のボタンにあったフォーカスは同じボタンへ戻す
+    var a = document.activeElement, nut = a && a.getAttribute && a.getAttribute('data-action') === 'dash-nut' ? a.getAttribute('data-nut') : null;
     $('#dash-body').innerHTML = ui.dashMode === 'day' ? dashDay(st) : dashPeriod(st);
+    if (nut) { var b = document.querySelector('[data-action=dash-nut][data-nut=' + nut + ']'); if (b) b.focus({ preventScroll: true }); }
   }
   function dashDay(st) {
     var tg = st.targets, day = st.days[0], list = entriesOf(day.date);
@@ -1959,10 +1969,29 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
     h += '<div class="card"><h3>食事ごとの kcal</h3>' + svgMealBars(MEALS.map(function (m) { return { label: m.label, v: sumOf(entriesOf(day.date, m.id)).kcal }; })) + '</div>';
     return h;
   }
+  // 日ごとの P・F・C（ボタンで 1 つを選ぶ）。P は多いほうが良いので目標以上に ✓、F・C は目標を超えた日を超えの色にする
+  var NUTS = [{ id: 'p', label: 'P たんぱく質', name: 'たんぱく質 P' }, { id: 'f', label: 'F 脂質', name: '脂質 F' }, { id: 'c', label: 'C 炭水化物', name: '炭水化物 C' }];
+  function nutOf(id) { for (var i = 0; i < NUTS.length; i++) if (NUTS[i].id === id) return NUTS[i]; return NUTS[0]; }
+  function dashNut(st) {
+    var n = nutOf(ui.dashNut);
+    return '<div class="card" id="dash-nut"><h3>日ごとの P・F・C</h3><div class="seg nut-seg" role="group" aria-label="グラフにする栄養素">' + NUTS.map(function (x) {
+      return '<button type="button" data-action="dash-nut" data-nut="' + x.id + '" aria-pressed="' + (x.id === n.id) + '"><i style="background:var(--' + x.id + ')"></i>' + x.label + '</button>';
+    }).join('') + '</div><div id="dash-nut-chart">' + dashNutChart(st, n) + '</div></div>';
+  }
+  // ボタンの切り替えではここ（グラフと凡例）だけを差し替える
+  function dashNutChart(st, n) {
+    var tg = st.targets[n.id];
+    if (!st.recordedDays) return '<p class="list-note">この期間の食事の記録はありません。</p>';
+    return svgDailyNut(st, n) + '<div class="legend">' + (n.id === 'p'
+      ? '<span><i style="background:var(--p)"></i>たんぱく質 P</span><span><i class="l-ok">✓</i>目標達成（目標以上）</span>'
+      : '<span><i style="background:var(--' + n.id + ')"></i>目標以内</span><span><i style="background:var(--over)"></i>目標超え</span>') +
+      '<span><i class="l-dash"></i>目標 ' + fmtK(tg) + ' g</span></div>';
+  }
   function dashPeriod(st) {
     var tg = st.targets, h = '';
     h += '<div class="card"><h3>日ごとの kcal</h3>' + svgDaily(st) +
       '<div class="legend"><span><i style="background:var(--accent)"></i>目標以内</span><span><i style="background:var(--over)"></i>目標超え</span><span><i class="l-dash"></i>目標 ' + fmtK(tg.kcal) + ' kcal</span></div></div>';
+    h += dashNut(st);
     var a = st.avg;
     h += '<div class="card" id="dash-avg"><h3>平均<span class="muted small">（記録のある ' + st.recordedDays + ' 日）</span></h3>';
     if (!a) h += '<p class="list-note">この期間の食事の記録はありません。</p>';
@@ -2041,11 +2070,14 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
     });
     return s + '</svg>';
   }
+  // 目盛りの間隔: 1・2・2.5・5 × 10 のべき乗のうち、0〜max の目盛りが 6 本以下になる最小のもの（kcal・g 共通）
   function niceStep(max) {
-    var steps = [100, 200, 250, 500, 1000, 2000];
-    for (var i = 0; i < steps.length; i++) if (max / steps[i] <= 5) return steps[i];
-    return 5000;
+    if (!(max > 0) || !isFinite(max)) return 1;
+    var p = Math.pow(10, Math.floor(Math.log10(max / 5))), m = [1, 2, 2.5, 5, 10];
+    for (var i = 0; i < m.length; i++) if (max / (m[i] * p) <= 5) return m[i] * p;
+    return 10 * p;
   }
+  function tickLabel(g) { return g >= 1000 ? (g / 1000) + 'k' : String(g); }
   function xLabelFor(st, i, d) {
     var dt = parseYmd(d.date);
     if (st.kind === 'week') return [dt.getDate() + '', WD[dt.getDay()]];
@@ -2059,13 +2091,13 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
     var step = niceStep(maxV), s = svgOpen(H, '日ごとの kcal');
     function Y(v) { return pt + ph - v / maxV * ph; }
     for (var g = 0; g <= maxV; g += step) {
-      s += line(pl, Y(g), W - pr, Y(g), 'grid') + t(pl - 4, Y(g) + 4, g >= 1000 ? (g / 1000) + 'k' : String(g), 'mut', 'end');
+      s += line(pl, Y(g), W - pr, Y(g), 'grid') + t(pl - 4, Y(g) + 4, tickLabel(g), 'mut', 'end');
     }
-    var slot = pw / days.length, bw = Math.max(2, slot * (st.kind === 'week' ? 0.6 : 0.7));
+    var slot = pw / days.length, bw = Math.max(2, slot * (st.kind === 'week' ? 0.6 : 0.7)), labels = '';
     days.forEach(function (d, i) {
       var cx = pl + slot * (i + 0.5);
       if (d.n > 0) s += rect(cx - bw / 2, Y(d.kcal), bw, Y(0) - Y(d.kcal), kcalOver(d.kcal, tgk) ? 'b-over' : 'b-k', Math.min(3, bw / 2));
-      if (st.kind === 'week' && d.n > 0) s += t(cx, Y(d.kcal) - 3, fmtK(d.kcal), 'mut tiny', 'middle');
+      if (st.kind === 'week' && d.n > 0) labels += t(cx, Y(d.kcal) - 3, fmtK(d.kcal), 'mut tiny vl', 'middle');
       var lb = xLabelFor(st, i, d);
       if (lb) {
         s += t(cx, H - pb + 14, lb[0], 'mut', 'middle');
@@ -2073,7 +2105,38 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
       }
     });
     s += line(pl, Y(tgk), W - pr, Y(tgk), 'tline');
-    return s + '</svg>';
+    return s + labels + '</svg>';   // 棒の上の数字は目標の線より上に重ね、背景色の縁取りで読めるようにする
+  }
+  function svgDailyNut(st, n) {
+    var k = n.id, days = st.days, tg = st.targets[k], H = 200, pl = 34, pr = 4, pt = 14, pb = st.kind === 'week' ? 32 : 20;
+    var pw = W - pl - pr, ph = H - pt - pb, rec = days.filter(function (d) { return d.n > 0; });
+    var maxV = Math.max(tg * 1.15, Math.max.apply(null, days.map(function (d) { return d[k]; })) * 1.08, 10);
+    var good = rec.filter(function (d) { return k === 'p' ? gramRest(tg, d[k]) <= 0 : gramRest(tg, d[k]) < 0; }).length;
+    var label = '日ごとの ' + n.name + '（g）。目標 ' + fmtK(tg) + ' g。記録のある ' + rec.length + ' 日のうち、' + (k === 'p' ? '目標以上' : '目標を超えた日') + ' ' + good + ' 日。' +
+      rec.map(function (d) { return parseYmd(d.date).getDate() + '日 ' + fmt1(d[k]) + ' g'; }).join('、');
+    var step = niceStep(maxV), s = svgOpen(H, label);
+    function Y(v) { return pt + ph - v / maxV * ph; }
+    for (var g = 0; g <= maxV; g += step) s += line(pl, Y(g), W - pr, Y(g), 'grid') + t(pl - 4, Y(g) + 4, tickLabel(g), 'mut', 'end');
+    var slot = pw / days.length, bw = Math.max(2, slot * (st.kind === 'week' ? 0.6 : 0.7)), labels = '';
+    days.forEach(function (d, i) {
+      var cx = pl + slot * (i + 0.5), v = d[k];
+      if (d.n > 0) {
+        var ok = k === 'p' && gramRest(tg, v) <= 0, over = k !== 'p' && gramRest(tg, v) < 0;
+        s += '<g class="nbar" data-date="' + d.date + '" data-v="' + v + '"' + (ok ? ' data-ok="1"' : '') + '>' +
+          rect(cx - bw / 2, Y(v), bw, Y(0) - Y(v), over ? 'b-over' : 'b-' + k, Math.min(3, bw / 2)) + '</g>';
+        var top = Y(v) - 3, lb = '';
+        if (st.kind === 'week') { lb += t(cx, top, fmt1(v), 'mut tiny vl', 'middle'); top -= 11; }
+        if (ok) lb += t(cx, top, '✓', st.kind === 'week' ? 'ok vl' : 'ok sm vl', 'middle');   // 月は棒が細いので ✓ を小さく
+        if (lb) labels += '<g class="nlab" data-date="' + d.date + '">' + lb + '</g>';
+      }
+      var lb = xLabelFor(st, i, d);
+      if (lb) {
+        s += t(cx, H - pb + 14, lb[0], 'mut', 'middle');
+        if (lb[1]) s += t(cx, H - pb + 27, lb[1], 'mut', 'middle');
+      }
+    });
+    s += line(pl, Y(tg), W - pr, Y(tg), 'tline');
+    return s + labels + '</svg>';
   }
   function svgWeight(st) {
     var days = st.days, pts = days.filter(function (d) { return d.weight != null; });
@@ -2283,6 +2346,15 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
       renderSettings();
     },
     'dash-mode': function (el) { ui.dashMode = el.getAttribute('data-mode'); renderDash(); },
+    'dash-nut': function (el) {
+      // ボタンは作り直さず（フォーカス・読み上げ位置を保つ）、押した状態とグラフだけ替える
+      var n = nutOf(el.getAttribute('data-nut')), box = $('#dash-nut-chart');
+      ui.dashNut = n.id;
+      Array.prototype.forEach.call(document.querySelectorAll('#dash-nut [data-action=dash-nut]'), function (b) {
+        b.setAttribute('aria-pressed', String(b.getAttribute('data-nut') === n.id));
+      });
+      if (box) box.innerHTML = dashNutChart(periodStats(ui.dashMode, ui.dashDate), n);
+    },
     'dash-prev': function () { shiftDash(-1); },
     'dash-next': function () { shiftDash(1); },
     'dash-today': function () { ui.dashDate = todayStr(); renderDash(); }
@@ -2493,6 +2565,7 @@ svg.chart .ma { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linec
     dayTotals: dayTotals,
     targets: function () { return targets(); },
     periodStats: periodStats,
+    niceStep: niceStep,
     exportJSON: exportJSON,
     exportCSV: exportCSV,
     download: download,
